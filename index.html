@@ -33,6 +33,7 @@
 </head>
 <body>
   <header>🔥 License Management Admin Panel</header>
+
   <!-- Stats -->
   <div class="stats">
     <div class="stat-box">
@@ -48,7 +49,8 @@
       <p>Total Licenses</p>
     </div>
   </div>
-  <!-- New License Create Form -->
+
+  <!-- License Creation -->
   <div class="form-container">
     <h2>➕ Create New License</h2>
     <div class="input-group">
@@ -65,23 +67,27 @@
     </div>
     <button id="createBtn">Create License</button>
   </div>
+
+  <!-- Table -->
   <table>
     <thead>
       <tr>
         <th>User ID</th>
         <th>Name</th>
         <th>Device Limit</th>
-        <th>Active Device</th>
-        <th>License</th>
+        <th>Active Devices</th>
+        <th>License Key</th>
         <th>Status</th>
         <th>Action</th>
       </tr>
     </thead>
     <tbody id="userTable"></tbody>
   </table>
+
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
-    import { getDatabase, ref, onValue, update, set, remove } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-database.js";
+    import { getDatabase, ref, onValue, update, set, remove, get, child } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-database.js";
+
     const firebaseConfig = {
       apiKey: "AIzaSyBmi3J1Ho06eK3Iq5081Dcm4RF5JfNTT0Y",
       authDomain: "xsiam-8cd91.firebaseapp.com",
@@ -92,50 +98,53 @@
       appId: "1:449795686178:web:f76de447b949b324eaef7b",
       measurementId: "G-888Z4WLJLJ"
     };
+
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    // Create New License
+    // ✅ Create License
     document.getElementById("createBtn").addEventListener("click", () => {
       const name = document.getElementById("userName").value.trim();
       const deviceLimit = document.getElementById("deviceLimit").value.trim();
       const licenseKey = document.getElementById("licenseKey").value.trim();
+
       if (!name || !deviceLimit || !licenseKey) {
         alert("⚠️ Please fill all fields");
         return;
       }
+
       const newUserRef = ref(db, "users/" + Date.now());
       set(newUserRef, {
-        name: name,
+        name,
         deviceLimit: parseInt(deviceLimit),
-        licenseKey: licenseKey,
-        devices: {},
+        licenseKey,
+        devices: {}, // Device data stored here
         status: "Active"
       }).then(() => {
         alert("✅ New License Created!");
         document.getElementById("userName").value = "";
         document.getElementById("deviceLimit").value = "";
         document.getElementById("licenseKey").value = "";
-      }).catch(err => {
-        alert("❌ Error: " + err.message);
       });
     });
 
-    // Load Users Table
+    // ✅ Load User Table
     const userTable = document.getElementById("userTable");
     const usersRef = ref(db, "users");
 
     onValue(usersRef, (snapshot) => {
       userTable.innerHTML = "";
-      let active = 0, blocked = 0, total = 0;
-      let counter = 1;
+      let active = 0, blocked = 0, total = 0, counter = 1;
+
       snapshot.forEach((childSnap) => {
         const userId = childSnap.key;
         const data = childSnap.val();
         total++;
+
         const deviceCount = data.devices ? Object.keys(data.devices).length : 0;
-        // Auto block if deviceLimit crossed
         let status = data.status || "Active";
+
+        // 🚫 Auto Block if Limit Exceeded
         if (deviceCount > (data.deviceLimit || 1)) {
           status = "Blocked";
           update(ref(db, "users/" + userId), { status: "Blocked" });
@@ -143,8 +152,10 @@
           status = "Active";
           update(ref(db, "users/" + userId), { status: "Active" });
         }
+
         if (status === "Active") active++;
         if (status === "Blocked") blocked++;
+
         const row = document.createElement("tr");
         row.innerHTML = `
           <td>${counter}</td>
@@ -159,59 +170,80 @@
             <button class="btn btn-block">${status === "Blocked" ? "Unblock" : "Block"}</button>
           </td>
         `;
-        // Edit
+
+        // ✏️ Edit
         row.querySelector(".btn-edit").addEventListener("click", () => {
           const newName = prompt("✏️ Enter new name:", data.name);
-          const newDeviceLimit = prompt("📱 Enter new device limit:", data.deviceLimit);
-          const newLicenseKey = prompt("🔑 Enter new license key:", data.licenseKey);
-          if (newName && newDeviceLimit && newLicenseKey) {
+          const newLimit = prompt("📱 Enter new device limit:", data.deviceLimit);
+          const newKey = prompt("🔑 Enter new license key:", data.licenseKey);
+          if (newName && newLimit && newKey) {
             update(ref(db, "users/" + userId), {
               name: newName,
-              deviceLimit: parseInt(newDeviceLimit),
-              licenseKey: newLicenseKey
+              deviceLimit: parseInt(newLimit),
+              licenseKey: newKey
             });
           }
         });
-        // Delete
+
+        // 🗑️ Delete
         row.querySelector(".btn-delete").addEventListener("click", () => {
-          if (confirm("⚠️ Are you sure you want to delete this user?")) {
+          if (confirm("⚠️ Are you sure you want to delete this license?")) {
             remove(ref(db, "users/" + userId));
           }
         });
-        // Block / Unblock
+
+        // 🚫 Block/Unblock
         row.querySelector(".btn-block").addEventListener("click", () => {
           const newStatus = status === "Blocked" ? "Active" : "Blocked";
           update(ref(db, "users/" + userId), { status: newStatus });
         });
+
         userTable.appendChild(row);
         counter++;
       });
+
       document.getElementById("activeCount").textContent = active;
       document.getElementById("blockedCount").textContent = blocked;
       document.getElementById("totalCount").textContent = total;
     });
+
+    /* ✅ Device Verification Logic (for user app)
+       When user verifies license, they send deviceId.
+       The system checks:
+       - if deviceId already exists → don't count again
+       - else → add it as new device entry
+    */
+    window.verifyLicense = async function (licenseKey, deviceId) {
+      const snapshot = await get(usersRef);
+      if (!snapshot.exists()) return "❌ No users found";
+
+      let verified = false;
+
+      snapshot.forEach((childSnap) => {
+        const userId = childSnap.key;
+        const data = childSnap.val();
+        if (data.licenseKey === licenseKey) {
+          const deviceRef = ref(db, `users/${userId}/devices/${deviceId}`);
+          if (!data.devices || !data.devices[deviceId]) {
+            // Add only if new device
+            set(deviceRef, { verifiedAt: new Date().toISOString() });
+          }
+          verified = true;
+        }
+      });
+
+      return verified ? "✅ License Verified" : "❌ Invalid License";
+    };
   </script>
+
   <script>
-    document.addEventListener("contextmenu", (e) => e.preventDefault());
-    document.addEventListener("keydown", (e) => {
-      if (
-        e.key === "F12" ||
-        (e.ctrlKey && e.shiftKey && ["I","J","C"].includes(e.key)) ||
-        (e.ctrlKey && e.key === "U") ||
-        (e.ctrlKey && e.key === "S")
-      ) {
+    // 🧠 Anti-inspect script
+    document.addEventListener("contextmenu", e => e.preventDefault());
+    document.addEventListener("keydown", e => {
+      if (e.key === "F12" || (e.ctrlKey && e.shiftKey && ["I", "J", "C"].includes(e.key)) || (e.ctrlKey && ["U", "S"].includes(e.key))) {
         e.preventDefault();
-        return false;
       }
     });
-    setInterval(function () {
-      const before = new Date().getTime();
-      debugger;
-      const after = new Date().getTime();
-      if (after - before > 100) {
-        document.body.innerHTML = "<h1 style='color:red;text-align:center;margin-top:20%;'>🚫 Developer Tools Disabled</h1>";
-      }
-    }, 1000);
   </script>
 </body>
 </html>
